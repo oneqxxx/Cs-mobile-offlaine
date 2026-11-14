@@ -1,0 +1,1337 @@
+    `${n} | Легенда`];
+});
+
+const State = {
+  side:'CT', map:'dust', matchType:'5v5',
+  chrome:Infinity,
+  accounts: JSON.parse(localStorage.getItem('accounts')||'[]'),
+  currentAcc: localStorage.getItem('currentAcc') || null,
+  owned: JSON.parse(localStorage.getItem('owned')||'{}'),
+  equipped: JSON.parse(localStorage.getItem('equipped')||'{}'),
+};
+if(State.accounts.length===0){
+  State.accounts.push({name:'Игрок1', id:genId(), created:Date.now()});
+  State.currentAcc = 'Игрок1';
+  localStorage.setItem('accounts', JSON.stringify(State.accounts));
+  localStorage.setItem('currentAcc', State.currentAcc);
+}
+
+function genId(){
+  const regDigit = Math.floor(Math.random()*10);
+  let s=''; for(let i=0;i<8;i++) s+=Math.floor(Math.random()*10);
+  return s + regDigit;
+}
+function getAcc(){ return State.accounts.find(a=>a.name===State.currentAcc) || State.accounts[0]; }
+
+/* ====================== АККАУНТЫ ====================== */
+const Accounts = {
+  render(){
+    const box = document.getElementById('accList');
+    box.innerHTML = '';
+    State.accounts.forEach(acc=>{
+      const div = document.createElement('div');
+      div.className = 'acc-row' + (acc.name===State.currentAcc?' active':'');
+      div.innerHTML = `<div><div class="nm">${acc.name}</div><div class="id">ID: ${acc.id}</div></div>
+        <div>
+          <button onclick="Accounts.switch('${acc.name}')">Войти</button>
+          ${State.accounts.length>1?`<button class="del" onclick="Accounts.del('${acc.name}')">✖</button>`:''}
+        </div>`;
+      box.appendChild(div);
+    });
+  },
+  create(){
+    const name = prompt('Имя нового аккаунта:');
+    if(!name || !name.trim()) return;
+    if(State.accounts.find(a=>a.name===name.trim())){ alert('Такое имя уже есть'); return; }
+    State.accounts.push({name:name.trim(), id:genId(), created:Date.now()});
+    localStorage.setItem('accounts', JSON.stringify(State.accounts));
+    Accounts.render();
+  },
+  switch(name){
+    State.currentAcc = name;
+    localStorage.setItem('currentAcc', name);
+    UI.renderMenu();
+    Accounts.render();
+  },
+  del(name){
+    if(!confirm('Удалить аккаунт '+name+'?')) return;
+    State.accounts = State.accounts.filter(a=>a.name!==name);
+    if(State.currentAcc===name) State.currentAcc = State.accounts[0].name;
+    localStorage.setItem('accounts', JSON.stringify(State.accounts));
+    localStorage.setItem('currentAcc', State.currentAcc);
+    Accounts.render();
+    UI.renderMenu();
+  }
+};
+
+/* ====================== ЛОББИ (симуляция) ====================== */
+const Lobby = {
+  code:null, players:[],
+  create(){
+    this.code = Math.random().toString(36).substring(2,8).toUpperCase();
+    this.players = [getAcc().name + ' (ты)'];
+    document.getElementById('lobbyCodeView').textContent = this.code;
+    document.getElementById('lobbyRoom').style.display = 'block';
+    this.render();
+  },
+  join(){
+    const code = document.getElementById('joinCode').value.trim().toUpperCase();
+    if(code.length!==6){ alert('Код должен быть 6 символов'); return; }
+    this.code = code;
+    this.players = [getAcc().name + ' (ты)'];
+    document.getElementById('lobbyCodeView').textContent = this.code;
+    document.getElementById('lobbyRoom').style.display = 'block';
+    this.render();
+    alert('⚠️ Для подключения других игроков нужен сигнальный сервер (см. README). Пока это только симуляция.');
+  },
+  render(){
+    const ul = document.getElementById('lobbyPlayers');
+    ul.innerHTML = this.players.map(p=>`<li><span class="status-dot"></span>${p}</li>`).join('');
+  },
+  start(){ alert('Матч по сети требует сервера. Запускаю игру с ботами.'); Game.setMode('5v5'); Game.startMatch(); },
+  leave(){
+    this.code=null; this.players=[];
+    document.getElementById('lobbyRoom').style.display='none';
+  }
+};
+
+/* ====================== UI ====================== */
+const UI = {
+  show(id){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.getElementById('hud').classList.remove('active');
+    if(id==='inventory') UI.renderInventory();
+    if(id==='accounts') Accounts.render();
+    if(id==='menu') UI.renderMenu();
+  },
+  renderMenu(){
+    const acc = getAcc();
+    document.getElementById('myAccName').textContent = acc.name;
+    document.getElementById('myIdTag').textContent = acc.id;
+  },
+  renderInventory(){
+    const wBox = document.getElementById('invWeapons');
+    const kBox = document.getElementById('invKnives');
+    wBox.innerHTML=''; kBox.innerHTML='';
+    WEAPONS.forEach(w=>{
+      const eq = State.equipped['w_'+w.id] || WEAPON_SKINS[w.id][0];
+      const div = document.createElement('div');
+      div.className='weapon-row';
+      div.innerHTML = `<div><div class="nm">${w.name}</div><div class="sk">${eq}</div></div><div class="eq">✔</div>`;
+      div.onclick = ()=>UI.pickSkin(w.id,false);
+      wBox.appendChild(div);
+    });
+    KNIVES.forEach(k=>{
+      const eq = State.equipped['k_'+k.id] || KNIFE_SKINS[k.id][0];
+      const div = document.createElement('div');
+      div.className='weapon-row';
+      div.innerHTML = `<div><div class="nm">${k.name}</div><div class="sk">${eq}</div></div><div class="eq">✔</div>`;
+      div.onclick = ()=>UI.pickSkin(k.id,true);
+      kBox.appendChild(div);
+    });
+  },
+  pickSkin(id,isKnife){
+    const list = isKnife?KNIFE_SKINS[id]:WEAPON_SKINS[id];
+    const owned = list.filter(s=>State.owned[s]);
+    if(owned.length===0){ alert('Нет скинов на это оружие. Открой кейсы!'); return; }
+    const pick = prompt('Выбери скин (номер):\n'+owned.map((s,i)=>`${i+1}. ${s}`).join('\n'));
+    const idx = parseInt(pick)-1;
+    if(idx>=0 && idx<owned.length){
+      State.equipped[(isKnife?'k_':'w_')+id] = owned[idx];
+      localStorage.setItem('equipped', JSON.stringify(State.equipped));
+      UI.renderInventory();
+    }
+  },
+  saveId(){
+    const v = document.getElementById('idInput').value.replace(/\D/g,'');
+    if(v.length!==9){ alert('ID = ровно 9 цифр'); return; }
+    const acc = getAcc(); acc.id = v;
+    localStorage.setItem('accounts', JSON.stringify(State.accounts));
+    document.getElementById('idPreview').textContent = v;
+    document.getElementById('myIdTag').textContent = v;
+    alert('ID сохранён. Последняя цифра = '+v[8]);
+  },
+  installPWA(){
+    if(window.deferredPrompt){ window.deferredPrompt.prompt(); }
+    else { alert('Меню браузера → Установить приложение'); }
+  }
+};
+
+/* ====================== КЕЙСЫ ====================== */
+const Cases = {
+  open(type){
+    let pool = [];
+    if(type==='knife'){
+      KNIVES.forEach(k=>KNIFE_SKINS[k.id].forEach(s=>pool.push({s, r:s.includes('Doppler')||s.includes('Lore')?'gold':'purple'})));
+    } else {
+      const rar = type==='blue'?'blue':type==='purple'?'purple':'gold';
+      WEAPONS.forEach(w=>{
+        const arr = WEAPON_SKINS[w.id];
+        const take = type==='blue'?arr.slice(0,5):type==='purple'?arr.slice(3,8):arr.slice(5,10);
+        take.forEach(s=>pool.push({s,r:rar}));
+      });
+    }
+    const reel = document.getElementById('caseReel');
+    reel.innerHTML='';
+    const roll = pool[Math.floor(Math.random()*pool.length)];
+    for(let i=0;i<20;i++){
+      const item = pool[Math.floor(Math.random()*pool.length)];
+      const d = document.createElement('div');
+      d.className='reel-item '+item.r;
+      d.style.cssText='width:120px;height:150px;flex-shrink:0;border-radius:12px;background:rgba(15,28,68,.9);'+
+        'border:2px solid #24408a;display:flex;align-items:center;justify-content:center;font-size:11px;text-align:center;padding:6px';
+      d.textContent = item.s;
+      reel.appendChild(d);
+    }
+    let offset = 0;
+    const iv = setInterval(()=>{
+      offset += 30; reel.scrollLeft = offset;
+      if(offset > 800){
+        clearInterval(iv);
+        State.owned[roll.s] = true;
+        localStorage.setItem('owned', JSON.stringify(State.owned));
+        document.getElementById('caseResult').textContent = '🎉 Выпало: ' + roll.s;
+      }
+    }, 30);
+  }
+};
+
+/* ====================== ДВИЖОК ИГРЫ ====================== */
+const Game = {
+  canvas:null, ctx:null,
+  running:false, paused:false,
+  prep:false, prepLeft:7,
+  mode:'5v5', map:'dust', side:'CT',
+  player:null, bots:[], bullets:[], grenades:[], smokes:[], flashes:[],
+  scoreCT:0, scoreT:0, roundTime:90, roundLeft:90,
+  bomb:null, bombPlanted:false, bombTimer:0, bombCarrier:null,
+  keys:{}, aim:false, lastFire:0, weaponIndex:0, knifeIndex:0, usingKnife:false,
+  ctrl:{},
+
+  init(){
+    this.canvas = document.getElementById('c');
+    this.ctx = this.canvas.getContext('2d');
+    this.resize();
+    window.addEventListener('resize', ()=>this.resize());
+    this.bindControls();
+  },
+  resize(){
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  },
+  setMode(m){ this.mode = m; },
+  setMap(m){ this.map = m; },
+  setSide(s){ this.side = s; },
+  startMatch(){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById('hud').classList.add('active');
+    this.resetRound(true);
+    this.running = true;
+    this.paused = false;
+    this.loop();
+  },
+  resetRound(first){
+    const W=this.canvas.width, H=this.canvas.height;
+    this.player = {x:W/2, y:H*0.85, r:16, hp:100, ammo:WEAPONS[2].ammo,
+      weapon:WEAPONS[2], angle:-Math.PI/2, speed:3.2};
+    this.bots = [];
+    const n = this.mode==='1v1'?1 : this.mode==='2v2'?3 : 5;
+    for(let i=0;i<n;i++){
+      this.bots.push({
+        x:W*0.2 + Math.random()*W*0.6, y:H*0.1 + Math.random()*H*0.25,
+        r:16, hp:100, angle:Math.PI/2, speed:1.4 + Math.random()*0.6,
+        lastShot:0, wander:Math.random()*Math.PI*2, wanderT:0
+      });
+    }
+    this.bullets=[]; this.grenades=[]; this.smokes=[]; this.flashes=[];
+    this.bombPlanted=false; this.bombTimer=0;
+    this.bombCarrier = null;
+    if(this.side==='T' && this.mode==='5v5'){
+      // случайный бот или игрок получает бомбу
+      const who = Math.floor(Math.random()*(this.bots.length+1));
+      this.bombCarrier = who===this.bots.length ? 'player' : who;
+    }
+    this.roundLeft = this.roundTime;
+    this.startPrep();
+  },
+  startPrep(){
+    this.prep = true; this.prepLeft = 7;
+    const ov = document.getElementById('prepOverlay');
+    ov.classList.add('show');
+    document.getElementById('prepCount').textContent = '7';
+    this.prepTimer = setInterval(()=>{
+      this.prepLeft--;
+      document.getElementById('prepCount').textContent = this.prepLeft;
+      if(this.prepLeft<=0){
+        clearInterval(this.prepTimer);
+        ov.classList.remove('show');
+        this.prep = false;
+      }
+    }, 1000);
+    if(this.bombCarrier==='player'){
+      document.getElementById('bombIndicator').classList.add('show');
+    } else {
+      document.getElementById('bombIndicator').classList.remove('show');
+    }
+  },
+  bindControls(){
+    const fire = document.getElementById('btnFire');
+    const aim = document.getElementById('btnAim');
+    const gren = document.getElementById('btnGrenade');
+    const gren2 = document.getElementById('btnGrenade2');
+    const gren3 = document.getElementById('btnGrenade3');
+    const jump = document.getElementById('btnJump');
+    const reload = document.getElementById('btnReload');
+    const plant = document.getElementById('btnPlant');
+
+    const setFire=(v)=>{ this.ctrl.fire=v; };
+    fire.addEventListener('touchstart',e=>{e.preventDefault();setFire(true);});
+    fire.addEventListener('touchend',e=>{e.preventDefault();setFire(false);});
+    fire.addEventListener('mousedown',()=>setFire(true));
+    fire.addEventListener('mouseup',()=>setFire(false));
+
+    aim.addEventListener('touchstart',e=>{e.preventDefault();this.aim=true;});
+    aim.addEventListener('touchend',e=>{e.preventDefault();this.aim=false;});
+    aim.addEventListener('mousedown',()=>this.aim=true);
+    aim.addEventListener('mouseup',()=>this.aim=false);
+
+    gren.addEventListener('touchstart',e=>{e.preventDefault();this.throwGrenade('frag');});
+    gren2.addEventListener('touchstart',e=>{e.preventDefault();this.throwGrenade('flash');});
+    gren3.addEventListener('touchstart',e=>{e.preventDefault();this.throwGrenade('smoke');});
+    jump.addEventListener('touchstart',e=>{e.preventDefault();this.player.y-=20;});
+    reload.addEventListener('touchstart',e=>{e.preventDefault();this.reload();});
+
+    plant.addEventListener('touchstart',e=>{e.preventDefault();this.plantBomb();});
+
+    // Свайп по canvas — смена оружия/ножа
+    let startY = null, startT = 0;
+    this.canvas.addEventListener('touchstart', e=>{
+      const t = e.touches[0];
+      startY = t.clientY; startT = Date.now();
+      // движение: запоминаем точку для стика
+      this.touchMoveStart = {x:t.clientX, y:t.clientY};
+    });
+    this.canvas.addEventListener('touchmove', e=>{
+      const t = e.touches[0];
+      if(this.touchMoveStart){
+        const dx = t.clientX - this.touchMoveStart.x;
+        const dy = t.clientY - this.touchMoveStart.y;
+        this.player.x += dx*0.15;
+        this.player.y += dy*0.15;
+        this.touchMoveStart = {x:t.clientX, y:t.clientY};
+      }
+      // прицел: поворот
+      if(this.player){
+        const rect = this.canvas.getBoundingClientRect();
+        this.player.angle = Math.atan2(t.clientY - this.player.y, t.clientX - this.player.x);
+      }
+    });
+    this.canvas.addEventListener('touchend', e=>{
+      const t = e.changedTouches[0];
+      if(startY!=null && Math.abs(t.clientY - startY) > 80 && Date.now()-startT < 500){
+        this.swapWeapon();
+      }
+      startY=null; this.touchMoveStart=null;
+    });
+
+    // ПК: мышь
+    this.canvas.addEventListener('mousemove', e=>{
+      if(this.player){
+        const rect = this.canvas.getBoundingClientRect();
+        this.player.angle = Math.atan2(e.clientY - this.player.y, e.clientX - this.player.x);
+      }
+    });
+    this.canvas.addEventListener('mousedown', ()=>{ this.ctrl.fire=true; });
+    this.canvas.addEventListener('mouseup', ()=>{ this.ctrl.fire=false; });
+    window.addEventListener('keydown', e=>{
+      this.keys[e.key.toLowerCase()] = true;
+      if(e.key==='r') this.reload();
+      if(e.key==='q') this.swapWeapon();
+      if(e.key==='e') this.plantBomb();
+    });
+    window.addEventListener('keyup', e=>{ this.keys[e.key.toLowerCase()] = false; });
+  },
+  swapWeapon(){
+    const total = WEAPONS.length + KNIVES.length;
+    let idx = this.usingKnife ? WEAPONS.length + this.knifeIndex : this.weaponIndex;
+    idx = (idx+1) % total;
+    if(idx < WEAPONS.length){
+      this.weaponIndex = idx; this.usingKnife = false;
+      this.player.weapon = WEAPONS[idx];
+      this.player.ammo = WEAPONS[idx].ammo;
+      document.getElementById('hudWeapon').textContent = WEAPONS[idx].name;
+    } else {
+      this.knifeIndex = idx - WEAPONS.length; this.usingKnife = true;
+      document.getElementById('hudWeapon').textContent = KNIVES[this.knifeIndex].name;
+      this.player.ammo = Infinity;
+    }
+  },
+  reload(){
+    if(this.usingKnife) return;
+    this.player.ammo = this.player.weapon.ammo;
+  },
+  throwGrenade(type){
+    if(!this.player) return;
+    const speed = 8;
+    this.grenades.push({
+      x:this.player.x, y:this.player.y,
+      vx:Math.cos(this.player.angle)*speed, vy:Math.sin(this.player.angle)*speed,
+      type, t:0
+    });
+  },
+  plantBomb(){
+    if(this.bombCarrier!=='player' || this.bombPlanted) return;
+    const W=this.canvas.width, H=this.canvas.height;
+    const onA = Math.abs(this.player.x - W*0.25) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+    const onB = Math.abs(this.player.x - W*0.75) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+    if(onA || onB){
+      this.bombPlanted = true;
+      this.bombTimer = 40;
+      this.bomb = {x:this.player.x, y:this.player.y};
+      document.getElementById('bombIndicator').classList.remove('show');
+      alert('💣 Бомба заложена! Защищай её 40 секунд.');
+    } else {
+      alert('Встань на точку A или B!');
+    }
+  },
+  resume(){ this.paused=false; document.getElementById('pause').classList.remove('show'); },
+  exit(){
+    this.running=false; this.paused=false;
+    document.getElementById('pause').classList.remove('show');
+    document.getElementById('roundEnd').classList.remove('show');
+    document.getElementById('hud').classList.remove('active');
+    UI.show('menu');
+  },
+  nextRound(){
+    document.getElementById('roundEnd').classList.remove('show');
+    this.resetRound(false);
+  },
+  endRound(winner){
+    this.running = false;
+    if(winner==='CT') this.scoreCT++; else this.scoreT++;
+    document.getElementById('roundEndTitle').textContent =
+      winner==='CT'?'🛡 СПЕЦНАЗ ПОБЕДИЛ':'💥 ТЕРРОРИСТЫ ПОБЕДИЛИ';
+    document.getElementById('roundEndScore').textContent = `Счёт: CT ${this.scoreCT} — ${this.scoreT} T`;
+    document.getElementById('roundEnd').classList.add('show');
+  },
+
+  /* ============ ИГРОВОЙ ЦИКЛ ============ */
+  loop(){
+    if(!this.running && !this.paused) return;
+    requestAnimationFrame(()=>this.loop());
+    if(this.paused) return;
+    this.update();
+    this.draw();
+  },
+  update(){
+    if(this.prep) return;
+    const W=this.canvas.width, H=this.canvas.height;
+    // таймер раунда
+    if(this.running && !this.bombPlanted){
+      this.roundLeft -= 1/60;
+      if(this.roundLeft<=0){ this.endRound('CT'); return; }
+    }
+    // таймер бомбы
+    if(this.bombPlanted){
+      this.bombTimer -= 1/60;
+      if(this.bombTimer<=0){ this.endRound('T'); return; }
+      // если CT (игрок) подошёл к бомбе — разминируем
+      if(this.side==='CT' && Math.hypot(this.player.x-this.bomb.x, this.player.y-this.bomb.y)<40){
+        this.bombPlanted=false; this.endRound('CT'); return;
+      }
+    }
+    // движение игрока WASD
+    const sp = this.player.speed;
+    if(this.keys['w']||this.keys['ц']) this.player.y -= sp;
+    if(this.keys['s']||this.keys['ы']) this.player.y += sp;
+    if(this.keys['a']||this.keys['ф']) this.player.x -= sp;
+    if(this.keys['d']||this.keys['в']) this.player.x += sp;
+    this.player.x = Math.max(20, Math.min(W-20, this.player.x));
+    this.player.y = Math.max(20, Math.min(H-20, this.player.y));
+
+    // стрельба игрока
+    if(this.ctrl.fire){
+      const now = Date.now();
+      if(now - this.lastFire > this.player.weapon.rate){
+        this.lastFire = now;
+        if(this.usingKnife){
+          // нож — ближний бой
+          this.bots.forEach(b=>{
+            if(Math.hypot(b.x-this.player.x, b.y-this.player.y)<50){
+              b.hp -= KNIVES[this.knifeIndex].dmg;
+            }
+          });
+        } else {
+          if(this.player.ammo>0){
+            this.player.ammo--;
+            const spread = this.aim ? this.player.weapon.spread*0.3 : this.player.weapon.spread;
+            const ang = this.player.angle + (Math.random()-0.5)*spread;
+            this.bullets.push({
+              x:this.player.x, y:this.player.y,
+              vx:Math.cos(ang)*14, vy:Math.sin(ang)*14,
+              dmg:this.player.weapon.dmg, owner:'player', t:0
+            });
+          }
+        }
+      }
+    }
+
+    // боты: ИИ + стрельба
+    this.bots.forEach(b=>{
+      if(b.hp<=0) return;
+      // приближение к игроку
+      const dx = this.player.x - b.x, dy = this.player.y - b.y;
+      const dist = Math.hypot(dx,dy);
+      b.angle = Math.atan2(dy,dx);
+      if(dist>120){
+        b.x += Math.cos(b.angle)*b.speed;
+        b.y += Math.sin(b.angle)*b.speed;
+      }
+      b.x = Math.max(20, Math.min(W-20, b.x));
+      b.y = Math.max(20, Math.min(H-20, b.y));
+      // стрельба
+      const now = Date.now();
+      if(now - b.lastShot > 800 + Math.random()*600 && dist<600){
+        b.lastShot = now;
+        const acc = 0.15;
+        const ang = b.angle + (Math.random()-0.5)*acc;
+        this.bullets.push({
+          x:b.x, y:b.y,
+          vx:Math.cos(ang)*10, vy:Math.sin(ang)*10,
+          dmg:12, owner:'bot', t:0
+        });
+      }
+    });
+
+    // гранаты
+    this.grenades.forEach(g=>{
+      g.x += g.vx; g.y += g.vy;
+      g.vx *= 0.96; g.vy *= 0.96;
+      g.t += 1/60;
+      if(g.t > 1.5){
+        if(g.type==='frag'){
+          if(Math.hypot(this.player.x-g.x, this.player.y-g.y)<90) this.player.hp -= 40;
+          this.bots.forEach(b=>{
+            if(Math.hypot(b.x-g.x, b.y-g.y)<90) b.hp -= 40;
+          });
+        } else if(g.type==='smoke'){
+          this.smokes.push({x:g.x,y:g.y,t:8});
+        } else if(g.type==='flash'){
+          this.flashes.push({t:0.5, x:g.x, y:g.y});
+        }
+        g.dead = true;
+      }
+    });
+    this.grenades = this.grenades.filter(g=>!g.dead);
+
+    // дым — таймер
+    this.smokes.forEach(s=>s.t-=1/60);
+    this.smokes = this.smokes.filter(s=>s.t>0);
+    // вспышки
+    this.flashes.forEach(f=>f.t-=1/60);
+    this.flashes = this.flashes.filter(f=>f.t>0);
+
+    // пули
+    this.bullets.forEach(bu=>{
+      bu.x += bu.vx; bu.y += bu.vy; bu.t += 1/60;
+      if(bu.owner==='player'){
+        this.bots.forEach(b=>{
+          if(b.hp>0 && Math.hypot(b.x-bu.x, b.y-bu.y)<18){ b.hp -= bu.dmg; bu.dead=true; }
+        });
+      } else {
+        if(Math.hypot(this.player.x-bu.x, this.player.y-bu.y)<18){
+          this.player.hp -= bu.dmg; bu.dead = true;
+        }
+      }
+      if(bu.t>2 || bu.x<0||bu.x>W||bu.y<0||bu.y>H) bu.dead = true;
+    });
+    this.bullets = this.bullets.filter(b=>!b.dead);
+    this.bots = this.bots.filter(b=>b.hp>0);
+
+    // победа
+    if(this.player.hp<=0){ this.endRound(this.side==='CT'?'T':'CT'); return; }
+    if(this.bots.length===0 && !this.bombPlanted){ this.endRound(this.side); return; }
+
+    // HUD
+    document.getElementById('hpFill').style.width = Math.max(0,this.player.hp)+'%';
+    document.getElementById('hudAmmo').textContent = this.usingKnife?'∞':this.player.ammo;
+    document.getElementById('hudCT').textContent = this.scoreCT;
+    document.getElementById('hudT').textContent = this.scoreT;
+    const tm = Math.max(0,Math.floor(this.bombPlanted?this.bombTimer:this.roundLeft));
+    document.getElementById('hudTimer').textContent = `${Math.floor(tm/60)}:${String(tm%60).padStart(2,'0')}`;
+    // кнопка закладки
+    if(this.bombCarrier==='player' && !this.bombPlanted){
+      const onA = Math.abs(this.player.x - W*0.25) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+      const onB = Math.abs(this.player.x - W*0.75) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+      document.getElementById('btnPlant').classList.toggle('show', onA||onB);
+    } else {
+      document.getElementById('btnPlant').classList.remove('show');
+    }
+  },
+  draw(){
+    const ctx = this.ctx, W=this.canvas.width, H=this.canvas.height;
+    // фон карты
+    ctx.fillStyle = this.map==='dust'?'#5c4a2a':this.map==='nuke'?'#2a3a2a':'#3a1a1a';
+    ctx.fillRect(0,0,W,H);
+    // сетка
+    ctx.strokeStyle='rgba(255,255,255,.05)'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    // точки A и B
+    ctx.fillStyle='rgba(255,100,100,.3)';
+    ctx.beginPath();ctx.arc(W*0.25,H*0.2,70,0,7);ctx.fill();
+    ctx.beginPath();ctx.arc(W*0.75,H*0.2,70,0,7);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 22px sans-serif';ctx.textAlign='center';
+    ctx.fillText('A',W*0.25,H*0.2+8); ctx.fillText('B',W*0.75,H*0.2+8);
+
+    // дым
+    this.smokes.forEach(s=>{
+      ctx.fillStyle='rgba(200,200,200,'+(0.5*Math.min(1,s.t/2))+')';
+      ctx.beginPath();ctx.arc(s.x,s.y,90,0,7);ctx.fill();
+    });
+    // вспышки
+    this.flashes.forEach(f=>{
+      ctx.fillStyle='rgba(255,255,255,'+(f.t*1.5)+')';
+      ctx.fillRect(0,0,W,H);
+    });
+
+    // бомба
+    if(this.bombPlanted){
+      ctx.fillStyle='#ff3030';
+      ctx.beginPath();ctx.arc(this.bomb.x,this.bomb.y,14,0,7);ctx.fill();
+      ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';
+      ctx.fillText('💣',this.bomb.x,this.bomb.y+4);
+    }
+
+    // боты
+    this.bots.forEach(b=>{
+      // тело
+      ctx.fillStyle=b.hp>0?(this.side==='CT'?'#ff7b5c':'#4da6ff'):'#444';
+      ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();
+      // ствол
+      ctx.strokeStyle='#000';ctx.lineWidth=4;
+      ctx.beginPath();ctx.moveTo(b.x,b.y);
+      ctx.lineTo(b.x+Math.cos(b.angle)*b.r*1.6, b.y+Math.sin(b.angle)*b.r*1.6);ctx.stroke();
+      // hp
+      ctx.fillStyle='#000';ctx.fillRect(b.x-16,b.y-b.r-10,32,4);
+      ctx.fillStyle='#4ade80';ctx.fillRect(b.x-16,b.y-b.r-10,32*(b.hp/100),4);
+    });
+
+    // игрок
+    const p = this.player;
+    ctx.fillStyle = this.side==='CT'?'#4da6ff':'#ff7b5c';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill();
+    ctx.strokeStyle='#000';ctx.lineWidth=5;
+    ctx.beginPath();ctx.moveTo(p.x,p.y);
+    ctx.lineTo(p.x+Math.cos(p.angle)*p.r*1.8, p.y+Math.sin(p.angle)*p.r*1.8);ctx.stroke();
+    // прицел
+    if(this.aim){
+      ctx.strokeStyle='#ffe066';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(p.x+Math.cos(p.angle)*200, p.y+Math.sin(p.angle)*200, 6, 0, 7);ctx.stroke();
+    }
+
+    // пули
+    this.bullets.forEach(bu=>{
+      ctx.fillStyle = bu.owner==='player'?'#ffe066':'#ff6b6b';
+      ctx.beginPath();ctx.arc(bu.x,bu.y,3,0,7);ctx.fill();
+    });
+    // гранаты
+    this.grenades.forEach(g=>{
+      ctx.fillStyle = g.type==='frag'?'#ffaa00':g.type==='flash'?'#ffffff':'#888';
+      ctx.beginPath();ctx.arc(g.x,g.y,6,0,7);ctx.fill();
+    });
+  }
+};
+
+/* ====================== СТАРТ ====================== */
+window.addEventListener('load', ()=>{
+  Game.init();
+  UI.renderMenu();
+  if(window.innerWidth<window.innerHeight){
+    document.getElementById('rotate').style.display='flex';
+    setTimeout(()=>{ document.getElementById('rotate').style.display='none'; }, 3000);
+  }
+});
+window.addEventListener('orientationchange', ()=>{
+  document.getElementById('rotate').style.display =
+    window.innerWidth<window.innerHeight?'flex':'none';
+});
+
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault(); window.deferredPrompt = e;
+});
+</script>
+</body>
+</html>    `${n} | Легенда`];
+});
+
+const State = {
+  side:'CT', map:'dust', matchType:'5v5',
+  chrome:Infinity,
+  accounts: JSON.parse(localStorage.getItem('accounts')||'[]'),
+  currentAcc: localStorage.getItem('currentAcc') || null,
+  owned: JSON.parse(localStorage.getItem('owned')||'{}'),
+  equipped: JSON.parse(localStorage.getItem('equipped')||'{}'),
+};
+if(State.accounts.length===0){
+  State.accounts.push({name:'Игрок1', id:genId(), created:Date.now()});
+  State.currentAcc = 'Игрок1';
+  localStorage.setItem('accounts', JSON.stringify(State.accounts));
+  localStorage.setItem('currentAcc', State.currentAcc);
+}
+
+function genId(){
+  const regDigit = Math.floor(Math.random()*10);
+  let s=''; for(let i=0;i<8;i++) s+=Math.floor(Math.random()*10);
+  return s + regDigit;
+}
+function getAcc(){ return State.accounts.find(a=>a.name===State.currentAcc) || State.accounts[0]; }
+
+/* ====================== АККАУНТЫ ====================== */
+const Accounts = {
+  render(){
+    const box = document.getElementById('accList');
+    box.innerHTML = '';
+    State.accounts.forEach(acc=>{
+      const div = document.createElement('div');
+      div.className = 'acc-row' + (acc.name===State.currentAcc?' active':'');
+      div.innerHTML = `<div><div class="nm">${acc.name}</div><div class="id">ID: ${acc.id}</div></div>
+        <div>
+          <button onclick="Accounts.switch('${acc.name}')">Войти</button>
+          ${State.accounts.length>1?`<button class="del" onclick="Accounts.del('${acc.name}')">✖</button>`:''}
+        </div>`;
+      box.appendChild(div);
+    });
+  },
+  create(){
+    const name = prompt('Имя нового аккаунта:');
+    if(!name || !name.trim()) return;
+    if(State.accounts.find(a=>a.name===name.trim())){ alert('Такое имя уже есть'); return; }
+    State.accounts.push({name:name.trim(), id:genId(), created:Date.now()});
+    localStorage.setItem('accounts', JSON.stringify(State.accounts));
+    Accounts.render();
+  },
+  switch(name){
+    State.currentAcc = name;
+    localStorage.setItem('currentAcc', name);
+    UI.renderMenu();
+    Accounts.render();
+  },
+  del(name){
+    if(!confirm('Удалить аккаунт '+name+'?')) return;
+    State.accounts = State.accounts.filter(a=>a.name!==name);
+    if(State.currentAcc===name) State.currentAcc = State.accounts[0].name;
+    localStorage.setItem('accounts', JSON.stringify(State.accounts));
+    localStorage.setItem('currentAcc', State.currentAcc);
+    Accounts.render();
+    UI.renderMenu();
+  }
+};
+
+/* ====================== ЛОББИ (симуляция) ====================== */
+const Lobby = {
+  code:null, players:[],
+  create(){
+    this.code = Math.random().toString(36).substring(2,8).toUpperCase();
+    this.players = [getAcc().name + ' (ты)'];
+    document.getElementById('lobbyCodeView').textContent = this.code;
+    document.getElementById('lobbyRoom').style.display = 'block';
+    this.render();
+  },
+  join(){
+    const code = document.getElementById('joinCode').value.trim().toUpperCase();
+    if(code.length!==6){ alert('Код должен быть 6 символов'); return; }
+    this.code = code;
+    this.players = [getAcc().name + ' (ты)'];
+    document.getElementById('lobbyCodeView').textContent = this.code;
+    document.getElementById('lobbyRoom').style.display = 'block';
+    this.render();
+    alert('⚠️ Для подключения других игроков нужен сигнальный сервер (см. README). Пока это только симуляция.');
+  },
+  render(){
+    const ul = document.getElementById('lobbyPlayers');
+    ul.innerHTML = this.players.map(p=>`<li><span class="status-dot"></span>${p}</li>`).join('');
+  },
+  start(){ alert('Матч по сети требует сервера. Запускаю игру с ботами.'); Game.setMode('5v5'); Game.startMatch(); },
+  leave(){
+    this.code=null; this.players=[];
+    document.getElementById('lobbyRoom').style.display='none';
+  }
+};
+
+/* ====================== UI ====================== */
+const UI = {
+  show(id){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.getElementById('hud').classList.remove('active');
+    if(id==='inventory') UI.renderInventory();
+    if(id==='accounts') Accounts.render();
+    if(id==='menu') UI.renderMenu();
+  },
+  renderMenu(){
+    const acc = getAcc();
+    document.getElementById('myAccName').textContent = acc.name;
+    document.getElementById('myIdTag').textContent = acc.id;
+  },
+  renderInventory(){
+    const wBox = document.getElementById('invWeapons');
+    const kBox = document.getElementById('invKnives');
+    wBox.innerHTML=''; kBox.innerHTML='';
+    WEAPONS.forEach(w=>{
+      const eq = State.equipped['w_'+w.id] || WEAPON_SKINS[w.id][0];
+      const div = document.createElement('div');
+      div.className='weapon-row';
+      div.innerHTML = `<div><div class="nm">${w.name}</div><div class="sk">${eq}</div></div><div class="eq">✔</div>`;
+      div.onclick = ()=>UI.pickSkin(w.id,false);
+      wBox.appendChild(div);
+    });
+    KNIVES.forEach(k=>{
+      const eq = State.equipped['k_'+k.id] || KNIFE_SKINS[k.id][0];
+      const div = document.createElement('div');
+      div.className='weapon-row';
+      div.innerHTML = `<div><div class="nm">${k.name}</div><div class="sk">${eq}</div></div><div class="eq">✔</div>`;
+      div.onclick = ()=>UI.pickSkin(k.id,true);
+      kBox.appendChild(div);
+    });
+  },
+  pickSkin(id,isKnife){
+    const list = isKnife?KNIFE_SKINS[id]:WEAPON_SKINS[id];
+    const owned = list.filter(s=>State.owned[s]);
+    if(owned.length===0){ alert('Нет скинов на это оружие. Открой кейсы!'); return; }
+    const pick = prompt('Выбери скин (номер):\n'+owned.map((s,i)=>`${i+1}. ${s}`).join('\n'));
+    const idx = parseInt(pick)-1;
+    if(idx>=0 && idx<owned.length){
+      State.equipped[(isKnife?'k_':'w_')+id] = owned[idx];
+      localStorage.setItem('equipped', JSON.stringify(State.equipped));
+      UI.renderInventory();
+    }
+  },
+  saveId(){
+    const v = document.getElementById('idInput').value.replace(/\D/g,'');
+    if(v.length!==9){ alert('ID = ровно 9 цифр'); return; }
+    const acc = getAcc(); acc.id = v;
+    localStorage.setItem('accounts', JSON.stringify(State.accounts));
+    document.getElementById('idPreview').textContent = v;
+    document.getElementById('myIdTag').textContent = v;
+    alert('ID сохранён. Последняя цифра = '+v[8]);
+  },
+  installPWA(){
+    if(window.deferredPrompt){ window.deferredPrompt.prompt(); }
+    else { alert('Меню браузера → Установить приложение'); }
+  }
+};
+
+/* ====================== КЕЙСЫ ====================== */
+const Cases = {
+  open(type){
+    let pool = [];
+    if(type==='knife'){
+      KNIVES.forEach(k=>KNIFE_SKINS[k.id].forEach(s=>pool.push({s, r:s.includes('Doppler')||s.includes('Lore')?'gold':'purple'})));
+    } else {
+      const rar = type==='blue'?'blue':type==='purple'?'purple':'gold';
+      WEAPONS.forEach(w=>{
+        const arr = WEAPON_SKINS[w.id];
+        const take = type==='blue'?arr.slice(0,5):type==='purple'?arr.slice(3,8):arr.slice(5,10);
+        take.forEach(s=>pool.push({s,r:rar}));
+      });
+    }
+    const reel = document.getElementById('caseReel');
+    reel.innerHTML='';
+    const roll = pool[Math.floor(Math.random()*pool.length)];
+    for(let i=0;i<20;i++){
+      const item = pool[Math.floor(Math.random()*pool.length)];
+      const d = document.createElement('div');
+      d.className='reel-item '+item.r;
+      d.style.cssText='width:120px;height:150px;flex-shrink:0;border-radius:12px;background:rgba(15,28,68,.9);'+
+        'border:2px solid #24408a;display:flex;align-items:center;justify-content:center;font-size:11px;text-align:center;padding:6px';
+      d.textContent = item.s;
+      reel.appendChild(d);
+    }
+    let offset = 0;
+    const iv = setInterval(()=>{
+      offset += 30; reel.scrollLeft = offset;
+      if(offset > 800){
+        clearInterval(iv);
+        State.owned[roll.s] = true;
+        localStorage.setItem('owned', JSON.stringify(State.owned));
+        document.getElementById('caseResult').textContent = '🎉 Выпало: ' + roll.s;
+      }
+    }, 30);
+  }
+};
+
+/* ====================== ДВИЖОК ИГРЫ ====================== */
+const Game = {
+  canvas:null, ctx:null,
+  running:false, paused:false,
+  prep:false, prepLeft:7,
+  mode:'5v5', map:'dust', side:'CT',
+  player:null, bots:[], bullets:[], grenades:[], smokes:[], flashes:[],
+  scoreCT:0, scoreT:0, roundTime:90, roundLeft:90,
+  bomb:null, bombPlanted:false, bombTimer:0, bombCarrier:null,
+  keys:{}, aim:false, lastFire:0, weaponIndex:0, knifeIndex:0, usingKnife:false,
+  ctrl:{},
+
+  init(){
+    this.canvas = document.getElementById('c');
+    this.ctx = this.canvas.getContext('2d');
+    this.resize();
+    window.addEventListener('resize', ()=>this.resize());
+    this.bindControls();
+  },
+  resize(){
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  },
+  setMode(m){ this.mode = m; },
+  setMap(m){ this.map = m; },
+  setSide(s){ this.side = s; },
+  startMatch(){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById('hud').classList.add('active');
+    this.resetRound(true);
+    this.running = true;
+    this.paused = false;
+    this.loop();
+  },
+  resetRound(first){
+    const W=this.canvas.width, H=this.canvas.height;
+    this.player = {x:W/2, y:H*0.85, r:16, hp:100, ammo:WEAPONS[2].ammo,
+      weapon:WEAPONS[2], angle:-Math.PI/2, speed:3.2};
+    this.bots = [];
+    const n = this.mode==='1v1'?1 : this.mode==='2v2'?3 : 5;
+    for(let i=0;i<n;i++){
+      this.bots.push({
+        x:W*0.2 + Math.random()*W*0.6, y:H*0.1 + Math.random()*H*0.25,
+        r:16, hp:100, angle:Math.PI/2, speed:1.4 + Math.random()*0.6,
+        lastShot:0, wander:Math.random()*Math.PI*2, wanderT:0
+      });
+    }
+    this.bullets=[]; this.grenades=[]; this.smokes=[]; this.flashes=[];
+    this.bombPlanted=false; this.bombTimer=0;
+    this.bombCarrier = null;
+    if(this.side==='T' && this.mode==='5v5'){
+      // случайный бот или игрок получает бомбу
+      const who = Math.floor(Math.random()*(this.bots.length+1));
+      this.bombCarrier = who===this.bots.length ? 'player' : who;
+    }
+    this.roundLeft = this.roundTime;
+    this.startPrep();
+  },
+  startPrep(){
+    this.prep = true; this.prepLeft = 7;
+    const ov = document.getElementById('prepOverlay');
+    ov.classList.add('show');
+    document.getElementById('prepCount').textContent = '7';
+    this.prepTimer = setInterval(()=>{
+      this.prepLeft--;
+      document.getElementById('prepCount').textContent = this.prepLeft;
+      if(this.prepLeft<=0){
+        clearInterval(this.prepTimer);
+        ov.classList.remove('show');
+        this.prep = false;
+      }
+    }, 1000);
+    if(this.bombCarrier==='player'){
+      document.getElementById('bombIndicator').classList.add('show');
+    } else {
+      document.getElementById('bombIndicator').classList.remove('show');
+    }
+  },
+  bindControls(){
+    const fire = document.getElementById('btnFire');
+    const aim = document.getElementById('btnAim');
+    const gren = document.getElementById('btnGrenade');
+    const gren2 = document.getElementById('btnGrenade2');
+    const gren3 = document.getElementById('btnGrenade3');
+    const jump = document.getElementById('btnJump');
+    const reload = document.getElementById('btnReload');
+    const plant = document.getElementById('btnPlant');
+
+    const setFire=(v)=>{ this.ctrl.fire=v; };
+    fire.addEventListener('touchstart',e=>{e.preventDefault();setFire(true);});
+    fire.addEventListener('touchend',e=>{e.preventDefault();setFire(false);});
+    fire.addEventListener('mousedown',()=>setFire(true));
+    fire.addEventListener('mouseup',()=>setFire(false));
+
+    aim.addEventListener('touchstart',e=>{e.preventDefault();this.aim=true;});
+    aim.addEventListener('touchend',e=>{e.preventDefault();this.aim=false;});
+    aim.addEventListener('mousedown',()=>this.aim=true);
+    aim.addEventListener('mouseup',()=>this.aim=false);
+
+    gren.addEventListener('touchstart',e=>{e.preventDefault();this.throwGrenade('frag');});
+    gren2.addEventListener('touchstart',e=>{e.preventDefault();this.throwGrenade('flash');});
+    gren3.addEventListener('touchstart',e=>{e.preventDefault();this.throwGrenade('smoke');});
+    jump.addEventListener('touchstart',e=>{e.preventDefault();this.player.y-=20;});
+    reload.addEventListener('touchstart',e=>{e.preventDefault();this.reload();});
+
+    plant.addEventListener('touchstart',e=>{e.preventDefault();this.plantBomb();});
+
+    // Свайп по canvas — смена оружия/ножа
+    let startY = null, startT = 0;
+    this.canvas.addEventListener('touchstart', e=>{
+      const t = e.touches[0];
+      startY = t.clientY; startT = Date.now();
+      // движение: запоминаем точку для стика
+      this.touchMoveStart = {x:t.clientX, y:t.clientY};
+    });
+    this.canvas.addEventListener('touchmove', e=>{
+      const t = e.touches[0];
+      if(this.touchMoveStart){
+        const dx = t.clientX - this.touchMoveStart.x;
+        const dy = t.clientY - this.touchMoveStart.y;
+        this.player.x += dx*0.15;
+        this.player.y += dy*0.15;
+        this.touchMoveStart = {x:t.clientX, y:t.clientY};
+      }
+      // прицел: поворот
+      if(this.player){
+        const rect = this.canvas.getBoundingClientRect();
+        this.player.angle = Math.atan2(t.clientY - this.player.y, t.clientX - this.player.x);
+      }
+    });
+    this.canvas.addEventListener('touchend', e=>{
+      const t = e.changedTouches[0];
+      if(startY!=null && Math.abs(t.clientY - startY) > 80 && Date.now()-startT < 500){
+        this.swapWeapon();
+      }
+      startY=null; this.touchMoveStart=null;
+    });
+
+    // ПК: мышь
+    this.canvas.addEventListener('mousemove', e=>{
+      if(this.player){
+        const rect = this.canvas.getBoundingClientRect();
+        this.player.angle = Math.atan2(e.clientY - this.player.y, e.clientX - this.player.x);
+      }
+    });
+    this.canvas.addEventListener('mousedown', ()=>{ this.ctrl.fire=true; });
+    this.canvas.addEventListener('mouseup', ()=>{ this.ctrl.fire=false; });
+    window.addEventListener('keydown', e=>{
+      this.keys[e.key.toLowerCase()] = true;
+      if(e.key==='r') this.reload();
+      if(e.key==='q') this.swapWeapon();
+      if(e.key==='e') this.plantBomb();
+    });
+    window.addEventListener('keyup', e=>{ this.keys[e.key.toLowerCase()] = false; });
+  },
+  swapWeapon(){
+    const total = WEAPONS.length + KNIVES.length;
+    let idx = this.usingKnife ? WEAPONS.length + this.knifeIndex : this.weaponIndex;
+    idx = (idx+1) % total;
+    if(idx < WEAPONS.length){
+      this.weaponIndex = idx; this.usingKnife = false;
+      this.player.weapon = WEAPONS[idx];
+      this.player.ammo = WEAPONS[idx].ammo;
+      document.getElementById('hudWeapon').textContent = WEAPONS[idx].name;
+    } else {
+      this.knifeIndex = idx - WEAPONS.length; this.usingKnife = true;
+      document.getElementById('hudWeapon').textContent = KNIVES[this.knifeIndex].name;
+      this.player.ammo = Infinity;
+    }
+  },
+  reload(){
+    if(this.usingKnife) return;
+    this.player.ammo = this.player.weapon.ammo;
+  },
+  throwGrenade(type){
+    if(!this.player) return;
+    const speed = 8;
+    this.grenades.push({
+      x:this.player.x, y:this.player.y,
+      vx:Math.cos(this.player.angle)*speed, vy:Math.sin(this.player.angle)*speed,
+      type, t:0
+    });
+  },
+  plantBomb(){
+    if(this.bombCarrier!=='player' || this.bombPlanted) return;
+    const W=this.canvas.width, H=this.canvas.height;
+    const onA = Math.abs(this.player.x - W*0.25) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+    const onB = Math.abs(this.player.x - W*0.75) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+    if(onA || onB){
+      this.bombPlanted = true;
+      this.bombTimer = 40;
+      this.bomb = {x:this.player.x, y:this.player.y};
+      document.getElementById('bombIndicator').classList.remove('show');
+      alert('💣 Бомба заложена! Защищай её 40 секунд.');
+    } else {
+      alert('Встань на точку A или B!');
+    }
+  },
+  resume(){ this.paused=false; document.getElementById('pause').classList.remove('show'); },
+  exit(){
+    this.running=false; this.paused=false;
+    document.getElementById('pause').classList.remove('show');
+    document.getElementById('roundEnd').classList.remove('show');
+    document.getElementById('hud').classList.remove('active');
+    UI.show('menu');
+  },
+  nextRound(){
+    document.getElementById('roundEnd').classList.remove('show');
+    this.resetRound(false);
+  },
+  endRound(winner){
+    this.running = false;
+    if(winner==='CT') this.scoreCT++; else this.scoreT++;
+    document.getElementById('roundEndTitle').textContent =
+      winner==='CT'?'🛡 СПЕЦНАЗ ПОБЕДИЛ':'💥 ТЕРРОРИСТЫ ПОБЕДИЛИ';
+    document.getElementById('roundEndScore').textContent = `Счёт: CT ${this.scoreCT} — ${this.scoreT} T`;
+    document.getElementById('roundEnd').classList.add('show');
+  },
+
+  /* ============ ИГРОВОЙ ЦИКЛ ============ */
+  loop(){
+    if(!this.running && !this.paused) return;
+    requestAnimationFrame(()=>this.loop());
+    if(this.paused) return;
+    this.update();
+    this.draw();
+  },
+  update(){
+    if(this.prep) return;
+    const W=this.canvas.width, H=this.canvas.height;
+    // таймер раунда
+    if(this.running && !this.bombPlanted){
+      this.roundLeft -= 1/60;
+      if(this.roundLeft<=0){ this.endRound('CT'); return; }
+    }
+    // таймер бомбы
+    if(this.bombPlanted){
+      this.bombTimer -= 1/60;
+      if(this.bombTimer<=0){ this.endRound('T'); return; }
+      // если CT (игрок) подошёл к бомбе — разминируем
+      if(this.side==='CT' && Math.hypot(this.player.x-this.bomb.x, this.player.y-this.bomb.y)<40){
+        this.bombPlanted=false; this.endRound('CT'); return;
+      }
+    }
+    // движение игрока WASD
+    const sp = this.player.speed;
+    if(this.keys['w']||this.keys['ц']) this.player.y -= sp;
+    if(this.keys['s']||this.keys['ы']) this.player.y += sp;
+    if(this.keys['a']||this.keys['ф']) this.player.x -= sp;
+    if(this.keys['d']||this.keys['в']) this.player.x += sp;
+    this.player.x = Math.max(20, Math.min(W-20, this.player.x));
+    this.player.y = Math.max(20, Math.min(H-20, this.player.y));
+
+    // стрельба игрока
+    if(this.ctrl.fire){
+      const now = Date.now();
+      if(now - this.lastFire > this.player.weapon.rate){
+        this.lastFire = now;
+        if(this.usingKnife){
+          // нож — ближний бой
+          this.bots.forEach(b=>{
+            if(Math.hypot(b.x-this.player.x, b.y-this.player.y)<50){
+              b.hp -= KNIVES[this.knifeIndex].dmg;
+            }
+          });
+        } else {
+          if(this.player.ammo>0){
+            this.player.ammo--;
+            const spread = this.aim ? this.player.weapon.spread*0.3 : this.player.weapon.spread;
+            const ang = this.player.angle + (Math.random()-0.5)*spread;
+            this.bullets.push({
+              x:this.player.x, y:this.player.y,
+              vx:Math.cos(ang)*14, vy:Math.sin(ang)*14,
+              dmg:this.player.weapon.dmg, owner:'player', t:0
+            });
+          }
+        }
+      }
+    }
+
+    // боты: ИИ + стрельба
+    this.bots.forEach(b=>{
+      if(b.hp<=0) return;
+      // приближение к игроку
+      const dx = this.player.x - b.x, dy = this.player.y - b.y;
+      const dist = Math.hypot(dx,dy);
+      b.angle = Math.atan2(dy,dx);
+      if(dist>120){
+        b.x += Math.cos(b.angle)*b.speed;
+        b.y += Math.sin(b.angle)*b.speed;
+      }
+      b.x = Math.max(20, Math.min(W-20, b.x));
+      b.y = Math.max(20, Math.min(H-20, b.y));
+      // стрельба
+      const now = Date.now();
+      if(now - b.lastShot > 800 + Math.random()*600 && dist<600){
+        b.lastShot = now;
+        const acc = 0.15;
+        const ang = b.angle + (Math.random()-0.5)*acc;
+        this.bullets.push({
+          x:b.x, y:b.y,
+          vx:Math.cos(ang)*10, vy:Math.sin(ang)*10,
+          dmg:12, owner:'bot', t:0
+        });
+      }
+    });
+
+    // гранаты
+    this.grenades.forEach(g=>{
+      g.x += g.vx; g.y += g.vy;
+      g.vx *= 0.96; g.vy *= 0.96;
+      g.t += 1/60;
+      if(g.t > 1.5){
+        if(g.type==='frag'){
+          if(Math.hypot(this.player.x-g.x, this.player.y-g.y)<90) this.player.hp -= 40;
+          this.bots.forEach(b=>{
+            if(Math.hypot(b.x-g.x, b.y-g.y)<90) b.hp -= 40;
+          });
+        } else if(g.type==='smoke'){
+          this.smokes.push({x:g.x,y:g.y,t:8});
+        } else if(g.type==='flash'){
+          this.flashes.push({t:0.5, x:g.x, y:g.y});
+        }
+        g.dead = true;
+      }
+    });
+    this.grenades = this.grenades.filter(g=>!g.dead);
+
+    // дым — таймер
+    this.smokes.forEach(s=>s.t-=1/60);
+    this.smokes = this.smokes.filter(s=>s.t>0);
+    // вспышки
+    this.flashes.forEach(f=>f.t-=1/60);
+    this.flashes = this.flashes.filter(f=>f.t>0);
+
+    // пули
+    this.bullets.forEach(bu=>{
+      bu.x += bu.vx; bu.y += bu.vy; bu.t += 1/60;
+      if(bu.owner==='player'){
+        this.bots.forEach(b=>{
+          if(b.hp>0 && Math.hypot(b.x-bu.x, b.y-bu.y)<18){ b.hp -= bu.dmg; bu.dead=true; }
+        });
+      } else {
+        if(Math.hypot(this.player.x-bu.x, this.player.y-bu.y)<18){
+          this.player.hp -= bu.dmg; bu.dead = true;
+        }
+      }
+      if(bu.t>2 || bu.x<0||bu.x>W||bu.y<0||bu.y>H) bu.dead = true;
+    });
+    this.bullets = this.bullets.filter(b=>!b.dead);
+    this.bots = this.bots.filter(b=>b.hp>0);
+
+    // победа
+    if(this.player.hp<=0){ this.endRound(this.side==='CT'?'T':'CT'); return; }
+    if(this.bots.length===0 && !this.bombPlanted){ this.endRound(this.side); return; }
+
+    // HUD
+    document.getElementById('hpFill').style.width = Math.max(0,this.player.hp)+'%';
+    document.getElementById('hudAmmo').textContent = this.usingKnife?'∞':this.player.ammo;
+    document.getElementById('hudCT').textContent = this.scoreCT;
+    document.getElementById('hudT').textContent = this.scoreT;
+    const tm = Math.max(0,Math.floor(this.bombPlanted?this.bombTimer:this.roundLeft));
+    document.getElementById('hudTimer').textContent = `${Math.floor(tm/60)}:${String(tm%60).padStart(2,'0')}`;
+    // кнопка закладки
+    if(this.bombCarrier==='player' && !this.bombPlanted){
+      const onA = Math.abs(this.player.x - W*0.25) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+      const onB = Math.abs(this.player.x - W*0.75) < 80 && Math.abs(this.player.y - H*0.2) < 80;
+      document.getElementById('btnPlant').classList.toggle('show', onA||onB);
+    } else {
+      document.getElementById('btnPlant').classList.remove('show');
+    }
+  },
+  draw(){
+    const ctx = this.ctx, W=this.canvas.width, H=this.canvas.height;
+    // фон карты
+    ctx.fillStyle = this.map==='dust'?'#5c4a2a':this.map==='nuke'?'#2a3a2a':'#3a1a1a';
+    ctx.fillRect(0,0,W,H);
+    // сетка
+    ctx.strokeStyle='rgba(255,255,255,.05)'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    // точки A и B
+    ctx.fillStyle='rgba(255,100,100,.3)';
+    ctx.beginPath();ctx.arc(W*0.25,H*0.2,70,0,7);ctx.fill();
+    ctx.beginPath();ctx.arc(W*0.75,H*0.2,70,0,7);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 22px sans-serif';ctx.textAlign='center';
+    ctx.fillText('A',W*0.25,H*0.2+8); ctx.fillText('B',W*0.75,H*0.2+8);
+
+    // дым
+    this.smokes.forEach(s=>{
+      ctx.fillStyle='rgba(200,200,200,'+(0.5*Math.min(1,s.t/2))+')';
+      ctx.beginPath();ctx.arc(s.x,s.y,90,0,7);ctx.fill();
+    });
+    // вспышки
+    this.flashes.forEach(f=>{
+      ctx.fillStyle='rgba(255,255,255,'+(f.t*1.5)+')';
+      ctx.fillRect(0,0,W,H);
+    });
+
+    // бомба
+    if(this.bombPlanted){
+      ctx.fillStyle='#ff3030';
+      ctx.beginPath();ctx.arc(this.bomb.x,this.bomb.y,14,0,7);ctx.fill();
+      ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';
+      ctx.fillText('💣',this.bomb.x,this.bomb.y+4);
+    }
+
+    // боты
+    this.bots.forEach(b=>{
+      // тело
+      ctx.fillStyle=b.hp>0?(this.side==='CT'?'#ff7b5c':'#4da6ff'):'#444';
+      ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();
+      // ствол
+      ctx.strokeStyle='#000';ctx.lineWidth=4;
+      ctx.beginPath();ctx.moveTo(b.x,b.y);
+      ctx.lineTo(b.x+Math.cos(b.angle)*b.r*1.6, b.y+Math.sin(b.angle)*b.r*1.6);ctx.stroke();
+      // hp
+      ctx.fillStyle='#000';ctx.fillRect(b.x-16,b.y-b.r-10,32,4);
+      ctx.fillStyle='#4ade80';ctx.fillRect(b.x-16,b.y-b.r-10,32*(b.hp/100),4);
+    });
+
+    // игрок
+    const p = this.player;
+    ctx.fillStyle = this.side==='CT'?'#4da6ff':'#ff7b5c';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill();
+    ctx.strokeStyle='#000';ctx.lineWidth=5;
+    ctx.beginPath();ctx.moveTo(p.x,p.y);
+    ctx.lineTo(p.x+Math.cos(p.angle)*p.r*1.8, p.y+Math.sin(p.angle)*p.r*1.8);ctx.stroke();
+    // прицел
+    if(this.aim){
+      ctx.strokeStyle='#ffe066';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(p.x+Math.cos(p.angle)*200, p.y+Math.sin(p.angle)*200, 6, 0, 7);ctx.stroke();
+    }
+
+    // пули
+    this.bullets.forEach(bu=>{
+      ctx.fillStyle = bu.owner==='player'?'#ffe066':'#ff6b6b';
+      ctx.beginPath();ctx.arc(bu.x,bu.y,3,0,7);ctx.fill();
+    });
+    // гранаты
+    this.grenades.forEach(g=>{
+      ctx.fillStyle = g.type==='frag'?'#ffaa00':g.type==='flash'?'#ffffff':'#888';
+      ctx.beginPath();ctx.arc(g.x,g.y,6,0,7);ctx.fill();
+    });
+  }
+};
+
+/* ====================== СТАРТ ====================== */
+window.addEventListener('load', ()=>{
+  Game.init();
+  UI.renderMenu();
+  if(window.innerWidth<window.innerHeight){
+    document.getElementById('rotate').style.display='flex';
+    setTimeout(()=>{ document.getElementById('rotate').style.display='none'; }, 3000);
+  }
+});
+window.addEventListener('orientationchange', ()=>{
+  document.getElementById('rotate').style.display =
+    window.innerWidth<window.innerHeight?'flex':'none';
+});
+
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+window.addEventListener('beforeinstallprompt', e=>{
+  e.preventDefault(); window.deferredPrompt = e;
+});
+</script>
+</body>
+</html>
